@@ -1,0 +1,22 @@
+[build]
+# Путь к точке входа в приложение
+cmd = "go build -o ./tmp/main ./cmd/server/server.go"
+bin = "tmp/main"
+log = "build.log"
+include_ext = ["go", "tpl", "tmpl", "html"]
+exclude_dir = ["tmp", "vendor", "node_modules", "migrations"]
+delay = 1000
+follow_symlink = false
+
+[log]
+time = true
+
+[color]
+main = "yellow"
+watcher = "cyan"
+build = "green"
+runner = "magenta"
+error = "red"
+
+[debug]
+enable = false
