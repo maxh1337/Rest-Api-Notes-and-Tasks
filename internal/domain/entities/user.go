@@ -1,10 +1,18 @@
 package entities
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrEmailAlreadyTaken    = errors.New("email already taken")
+	ErrUsernameAlreadyTaken = errors.New("username already taken")
+	ErrUserNotFound         = errors.New("user not found")
+	ErrInvalidEmailFormat   = errors.New("invalid email format")
 )
 
 type User struct {

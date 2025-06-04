@@ -10,6 +10,9 @@ import (
 	"rest-api-notes/internal/config"
 	"rest-api-notes/internal/domain/repositories"
 	"rest-api-notes/internal/domain/services"
+	"rest-api-notes/internal/domain/validator"
+	"rest-api-notes/internal/infrastructure/auth"
+	"rest-api-notes/internal/infrastructure/cache"
 	"rest-api-notes/internal/infrastructure/database"
 	"syscall"
 	"time"
@@ -20,9 +23,10 @@ import (
 
 func main() {
 	e := echo.New()
+	e.Validator = validator.NewValidator()
 
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
+		log.Fatalf("No .env file found: %v", err)
 	}
 
 	cfg, err := config.Load()
@@ -43,20 +47,41 @@ func main() {
 	db, err := database.NewPostgresDB(dbConfig)
 
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
+	client, err := cache.NewRedisClient(&cfg.Redis)
+
+	if err != nil {
+		log.Fatal("Failed to connect to redis:", err)
+	}
+
+	// var origins = []string{
+	// 	"*",
+	// }
+
+	// e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+	// 	AllowOrigins: origins,
+	// }))
+
+	// Non Entity Services if we can say like that
+	jwtService := auth.NewJWTService(cfg.JWT)
+	passwordService := auth.NewPasswordService()
+	sessionService := services.NewSessionService(client, time.Duration(cfg.JWT.JWT_REFRESH_EXPIRATION)*time.Hour)
+
 	// REPOS
-	userRepository := repositories.NewUserRepository(db)
+	userRepository := repositories.NewUserRepository(db, passwordService)
 
 	// SERVICES
 	userService := services.NewUserService(userRepository)
+	authService := services.NewAuthService(jwtService, passwordService, userRepository, sessionService)
 
 	// HANDLERS
 	userHandler := handlers.NewUserHandler(userService)
+	authHandler := handlers.NewAuthHandler(authService, cfg)
 
 	// ROUTES
-	routes.NewRoutes(e, userHandler)
+	routes.NewRoutes(e, userHandler, authHandler)
 
 	// START
 	go func() {

@@ -6,7 +6,8 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-func NewRoutes(e *echo.Echo, handlers handlers.UserHandler) {
+func NewRoutes(e *echo.Echo, userHandler handlers.UserHandler, authHandler handlers.AuthHandler) {
 	apiGroup := e.Group("/api/v1")
-	RegisterUserRoutes(apiGroup, handlers)
+	RegisterUserRoutes(apiGroup, userHandler)
+	RegisterAuthRoutes(apiGroup, authHandler)
 }
