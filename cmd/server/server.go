@@ -23,9 +23,12 @@ import (
 
 func main() {
 	e := echo.New()
-	e.Validator = validator.NewValidator()
 
-	if err := godotenv.Load(); err != nil {
+	e.Validator = validator.NewValidator()
+	e.HTTPErrorHandler = handlers.ErrorHandler
+
+	// os.Clearenv() // На случай если опять закэшировало дебильный .env
+	if err := godotenv.Overload(); err != nil {
 		log.Fatalf("No .env file found: %v", err)
 	}
 
@@ -56,41 +59,35 @@ func main() {
 		log.Fatal("Failed to connect to redis:", err)
 	}
 
-	// var origins = []string{
-	// 	"*",
-	// }
-
-	// e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-	// 	AllowOrigins: origins,
-	// }))
-
-	// Non Entity Services if we can say like that
 	jwtService := auth.NewJWTService(cfg.JWT)
 	passwordService := auth.NewPasswordService()
 	sessionService := services.NewSessionService(client, time.Duration(cfg.JWT.JWT_REFRESH_EXPIRATION)*time.Hour)
+	twoFactorService := services.NewTwoFactorService(sessionService, cfg)
 
 	// REPOS
 	userRepository := repositories.NewUserRepository(db, passwordService)
 
 	// SERVICES
-	userService := services.NewUserService(userRepository)
-	authService := services.NewAuthService(jwtService, passwordService, userRepository, sessionService)
+	userService := services.NewUserService(userRepository, sessionService, twoFactorService)
+	authService := services.NewAuthService(jwtService, passwordService,
+		userRepository, sessionService, twoFactorService)
 
 	// HANDLERS
-	userHandler := handlers.NewUserHandler(userService)
+	userHandler := handlers.NewUserHandler(userService, twoFactorService)
 	authHandler := handlers.NewAuthHandler(authService, cfg)
 
 	// ROUTES
-	routes.NewRoutes(e, userHandler, authHandler)
+	routes.SetupRoutes(e, cfg, jwtService, userHandler, authHandler)
 
 	// START
+	log.Printf("Server starting on port %s", cfg.Port)
 	go func() {
 		if err := e.Start(":" + cfg.Port); err != nil {
 			e.Logger.Infof("Shutting down the server: %v", err)
 		}
 	}()
 
-	// GRACEFUL SHUTDOWN
+	// GRACEFUL SHUTDOWN go
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit

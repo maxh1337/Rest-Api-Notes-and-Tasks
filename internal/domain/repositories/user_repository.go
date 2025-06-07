@@ -7,6 +7,7 @@ import (
 	"rest-api-notes/internal/infrastructure/auth"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -17,9 +18,14 @@ type userRepository struct {
 
 type UserRepository interface {
 	Create(dto *entities.UserRegisterReq) (*entities.User, error)
-	GetUserById(userId string) (*entities.User, error)
+	GetUserById(userId uuid.UUID) (*entities.User, error)
 	GetUserByUsername(username string) (*entities.User, error)
 	GetUserByEmail(email string) (*entities.User, error)
+	CheckUserUniqueness(email, username string) error
+	FindUserByEmailOrUsername(identifier string) (*entities.User, error)
+	UpdatePhoneNumber(phoneNumber string, userID uuid.UUID) error
+	EnableUser2FA(userID uuid.UUID) error
+	DisableUser2FA(userID uuid.UUID) error
 }
 
 func NewUserRepository(db *gorm.DB, ps auth.PasswordService) UserRepository {
@@ -60,13 +66,24 @@ func (r *userRepository) Create(dto *entities.UserRegisterReq) (*entities.User, 
 	return &user, nil
 }
 
-func (r *userRepository) GetUserById(userId string) (*entities.User, error) {
+func (r *userRepository) GetUserById(userId uuid.UUID) (*entities.User, error) {
 	var user entities.User
 	if err := r.db.First(&user, "id = ?", userId).Error; err != nil {
 		return nil, entities.ErrUserNotFound
 	}
 
 	return &user, nil
+}
+
+func (r *userRepository) UpdatePhoneNumber(phoneNumber string, userID uuid.UUID) error {
+	result := r.db.Model(&entities.User{}).Where("id = ?", userID).Update("phone_number", phoneNumber)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return entities.ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *userRepository) GetUserByUsername(username string) (*entities.User, error) {
@@ -85,4 +102,46 @@ func (r *userRepository) GetUserByEmail(email string) (*entities.User, error) {
 	}
 
 	return &user, nil
+}
+
+func (r *userRepository) CheckUserUniqueness(email, username string) error {
+	var user entities.User
+	if err := r.db.Where("email = ?", email).First(&user).Error; err == nil {
+		return entities.ErrEmailAlreadyTaken
+	}
+	if err := r.db.Where("username = ?", username).First(&user).Error; err == nil {
+		return entities.ErrUsernameAlreadyTaken
+	}
+	return nil
+}
+
+func (r *userRepository) FindUserByEmailOrUsername(identifier string) (*entities.User, error) {
+	var user entities.User
+	if err := r.db.Where("email = ?", identifier).Or("username = ?", identifier).First(&user).Error; err != nil {
+		return nil, entities.ErrUserNotFound
+	}
+
+	return &user, nil
+}
+
+func (r *userRepository) EnableUser2FA(userID uuid.UUID) error {
+	result := r.db.Model(&entities.User{}).Where("id = ?", userID).Update("two_factor_enabled", true)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return entities.ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *userRepository) DisableUser2FA(userID uuid.UUID) error {
+	result := r.db.Model(&entities.User{}).Where("id = ?", userID).Update("two_factor_enabled", false)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return entities.ErrUserNotFound
+	}
+	return nil
 }

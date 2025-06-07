@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"rest-api-notes/internal/config"
 	"time"
 
@@ -19,6 +20,7 @@ type RedisClient interface {
 	SetStruct(ctx context.Context, key string, value any, expiration time.Duration) error
 	GetStruct(ctx context.Context, key string, dest any) error
 	Delete(ctx context.Context, key string) error
+	GetAllByKey(ctx context.Context, pattern string, dest any) error
 }
 
 func NewRedisClient(cfg *config.RedisConfig) (RedisClient, error) {
@@ -57,4 +59,28 @@ func (r *redisClient) GetStruct(ctx context.Context, key string, dest any) error
 
 func (r *redisClient) Delete(ctx context.Context, key string) error {
 	return r.Client.Del(ctx, key).Err()
+}
+
+func (r *redisClient) GetAllByKey(ctx context.Context, pattern string, dest any) error {
+	iter := r.Client.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		data, err := r.Client.Get(ctx, iter.Val()).Result()
+		if err != nil {
+			continue
+		}
+
+		slicePtr := dest
+		elemType := reflect.TypeOf(slicePtr).Elem().Elem()
+		elemPtr := reflect.New(elemType)
+		if err := json.Unmarshal([]byte(data), elemPtr.Interface()); err != nil {
+			continue
+		}
+		reflect.ValueOf(slicePtr).Elem().Set(
+			reflect.Append(reflect.ValueOf(slicePtr).Elem(), elemPtr.Elem()),
+		)
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	return nil
 }

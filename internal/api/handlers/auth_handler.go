@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"rest-api-notes/internal/config"
 	"rest-api-notes/internal/domain/entities"
@@ -8,6 +9,7 @@ import (
 	"rest-api-notes/internal/infrastructure/auth"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -20,6 +22,9 @@ type AuthHandler interface {
 	Login(c echo.Context) error
 	Register(c echo.Context) error
 	Logout(c echo.Context) error
+	GetNewTokens(c echo.Context) error
+	Verify2FA(c echo.Context) error
+	Resend2FA(c echo.Context) error
 }
 
 func NewAuthHandler(authService services.AuthService, config *config.Config) AuthHandler {
@@ -29,83 +34,207 @@ func NewAuthHandler(authService services.AuthService, config *config.Config) Aut
 func (h *authHandler) Login(c echo.Context) error {
 	ctx := c.Request().Context()
 	req := new(entities.UserLoginReq)
-	err := c.Bind(req)
-	if err != nil {
+
+	if err := c.Bind(req); err != nil {
+		return entities.NewAPIError(entities.ErrorCodeInvalidInput, "Invalid request format")
+	}
+
+	if err := c.Validate(req); err != nil {
 		return err
 	}
+
 	userAgent := c.Request().UserAgent()
-	userIp := c.RealIP()
+	userIP := c.RealIP()
 
-	err = c.Validate(req)
+	res, session, err := h.authService.Login(ctx, req, userAgent, userIP)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, err.Error())
-	}
-
-	res, session, err := h.authService.Login(ctx, req, userAgent, userIp)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, err.Error())
+		if err == entities.Err2FARequired {
+			if res != nil && res.TwoFactorToken != "" {
+				if cookieErr := setTwoFactorCookieToResponse(c, h.cfg, res.TwoFactorToken); cookieErr != nil {
+					return entities.ConvertError(cookieErr)
+				}
+			}
+			return entities.NewTwoFactorRequiredError()
+		}
+		return entities.ConvertError(err)
 	}
 
 	setCookiesToResponse(c, session, h.cfg)
-
 	return c.JSON(http.StatusOK, res)
 }
 
 func (h *authHandler) Register(c echo.Context) error {
 	ctx := c.Request().Context()
 	req := new(entities.UserRegisterReq)
-	err := c.Bind(req)
-	if err != nil {
+
+	if err := c.Bind(req); err != nil {
+		return entities.NewAPIError(entities.ErrorCodeInvalidInput, "Invalid request format")
+	}
+
+	if err := c.Validate(req); err != nil {
 		return err
 	}
+
+	userAgent := c.Request().UserAgent()
+	userIP := c.RealIP()
+
+	res, session, err := h.authService.Register(ctx, req, userAgent, userIP)
+	if err != nil {
+		return entities.ConvertError(err)
+	}
+
+	setCookiesToResponse(c, session, h.cfg)
+	return c.JSON(http.StatusCreated, res)
+}
+
+func (h *authHandler) Logout(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	refreshToken, err := c.Request().Cookie("refreshToken")
+	if err != nil {
+		removeCookiesFromResponse(c, h.cfg)
+		return entities.ConvertError(entities.ErrRefreshTokenNotProvided)
+	}
+
+	sessionID, err := c.Request().Cookie("session_id")
+	if err != nil {
+		removeCookiesFromResponse(c, h.cfg)
+		return entities.ConvertError(entities.ErrSessionIDTokenNotProvided)
+	}
+
+	req := entities.UserLogoutReq{
+		RefreshToken: refreshToken.Value,
+		SessionID:    sessionID.Value,
+	}
+
+	if err := c.Validate(&req); err != nil {
+		removeCookiesFromResponse(c, h.cfg)
+		return err
+	}
+
+	if err := h.authService.Logout(ctx, &req); err != nil {
+		removeCookiesFromResponse(c, h.cfg)
+		return entities.ConvertError(err)
+	}
+
+	removeCookiesFromResponse(c, h.cfg)
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Successfully logged out",
+	})
+}
+
+func (h *authHandler) GetNewTokens(c echo.Context) error {
+	ctx := c.Request().Context()
+	refreshToken, err := c.Request().Cookie("refreshToken")
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, entities.ErrRefreshTokenNotProvided.Error())
+	}
+
+	sessionId, err := c.Request().Cookie("session_id")
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, entities.ErrRefreshTokenNotProvided.Error())
+	}
+
 	userAgent := c.Request().UserAgent()
 	userIp := c.RealIP()
 
-	err = c.Validate(req)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, err.Error())
+	req := &entities.UserGetNewTokensReq{
+		RefreshToken: refreshToken.Value,
+		SessionID:    sessionId.Value,
 	}
 
-	res, session, err := h.authService.Register(ctx, req, userAgent, userIp)
+	session, err := h.authService.GetNewTokens(ctx, req, userAgent, userIp)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, err.Error())
 	}
 
 	setCookiesToResponse(c, session, h.cfg)
 
-	return c.JSON(http.StatusCreated, res)
+	return c.JSON(http.StatusOK, map[string]string{"session_id": session.SessionID})
 }
 
-func (h *authHandler) Logout(c echo.Context) error {
+func (h *authHandler) Verify2FA(c echo.Context) error {
 	ctx := c.Request().Context()
-	refreshToken, err := c.Request().Cookie("refreshToken")
+
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "User not authenticated")
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "Invalid user ID")
+	}
+
+	code := c.Param("code")
+	if code == "" {
+		req := new(entities.Verify2FACodeReq)
+		if err := c.Bind(req); err != nil {
+			return entities.NewAPIError(entities.ErrorCodeInvalidInput, "Invalid request format")
+		}
+		if err := c.Validate(req); err != nil {
+			return err
+		}
+		code = req.Code
+	}
+
+	if code == "" {
+		return entities.NewAPIError(entities.ErrorCode2FACodeInvalid, "2FA code is required")
+	}
+
+	twoFactorCookie, err := c.Cookie("2fa_token")
 	if err != nil {
-		removeCookiesFromResponse(c, h.cfg)
-		return entities.ErrFailedToLoginRefreshTokenNotProvide
+		return entities.NewAPIError(entities.ErrorCodeRefreshTokenMissing, "2FA token is required")
 	}
 
-	sessionId, err := c.Request().Cookie("session_id")
+	userAgent := c.Request().UserAgent()
+	userIP := c.RealIP()
+
+	session, err := h.authService.Verify2FACode(ctx, code, twoFactorCookie.Value, userAgent, userIP, userID)
 	if err != nil {
-		removeCookiesFromResponse(c, h.cfg)
-		return entities.ErrFailedToLoginRefreshTokenNotProvide
+		return entities.ConvertError(err)
 	}
 
-	req := entities.UserLogoutReq{
-		RefreshToken: refreshToken.Value,
-		SessionID:    sessionId.Value,
+	setCookiesToResponse(c, session, h.cfg)
+	removeTwoFactorCookieFromResponse(c, h.cfg)
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "2FA verification successful",
+	})
+}
+
+func (h *authHandler) Resend2FA(c echo.Context) error {
+	ctx := c.Request().Context()
+	userAgent := c.Request().UserAgent()
+	userIP := c.RealIP()
+
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "User not authenticated")
 	}
 
-	err = h.authService.Logout(ctx, &req)
-	removeCookiesFromResponse(c, h.cfg)
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "Invalid user ID")
+	}
+
+	newToken, err := h.authService.Resend2FACode(ctx, userID, userAgent, userIP)
 	if err != nil {
-		return err
+		return entities.ConvertError(err)
 	}
 
-	return c.JSON(http.StatusOK, "Success")
+	if err := setTwoFactorCookieToResponse(c, h.cfg, *newToken); err != nil {
+		return entities.ConvertError(err)
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "2FA code resent successfully",
+	})
 }
 
 func setCookiesToResponse(c echo.Context, session *entities.Session, cfg *config.Config) error {
 	isProduction := cfg.NODE_ENV == "production"
+	log.Printf("Access Exp: %+v", cfg)
 	c.SetCookie(&http.Cookie{
 		Name:     auth.CookieTokenAccess,
 		Value:    session.AccessToken,
@@ -148,6 +277,7 @@ func removeCookiesFromResponse(c echo.Context, cfg *config.Config) error {
 		Name:     auth.CookieTokenAccess,
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
+		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isProduction,
 		SameSite: getSameSiteMode(isProduction),
@@ -159,6 +289,7 @@ func removeCookiesFromResponse(c echo.Context, cfg *config.Config) error {
 		Name:     auth.CookieTokenRefresh,
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
+		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isProduction,
 		SameSite: getSameSiteMode(isProduction),
@@ -170,6 +301,39 @@ func removeCookiesFromResponse(c echo.Context, cfg *config.Config) error {
 		Name:     auth.CookieTokenSessionID,
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isProduction,
+		SameSite: getSameSiteMode(isProduction),
+		Path:     cfg.JWT.JWT_PATH,
+		Domain:   cfg.JWT.JWT_DOMAIN,
+	})
+
+	return nil
+}
+
+func setTwoFactorCookieToResponse(c echo.Context, cfg *config.Config, token string) error {
+	isProduction := cfg.NODE_ENV == "production"
+	c.SetCookie(&http.Cookie{
+		Name:     auth.CookieToken2Fa,
+		Value:    token,
+		Expires:  time.Now().Add(time.Duration(cfg.JWT.JWT_2FA_EXPIRATION) * time.Minute),
+		HttpOnly: true,
+		Secure:   isProduction,
+		SameSite: getSameSiteMode(isProduction),
+		Path:     cfg.JWT.JWT_PATH,
+		Domain:   cfg.JWT.JWT_DOMAIN,
+	})
+	return nil
+}
+
+func removeTwoFactorCookieFromResponse(c echo.Context, cfg *config.Config) error {
+	isProduction := cfg.NODE_ENV == "production"
+	c.SetCookie(&http.Cookie{
+		Name:     auth.CookieToken2Fa,
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isProduction,
 		SameSite: getSameSiteMode(isProduction),

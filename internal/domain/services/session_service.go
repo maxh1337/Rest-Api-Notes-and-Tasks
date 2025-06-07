@@ -22,6 +22,11 @@ type SessionService interface {
 	DeleteSession(ctx context.Context, userID uuid.UUID, sessionID string) error
 	UpdateSession(ctx context.Context, userID uuid.UUID, sessionID string, session *entities.Session) error
 	IsSessionValid(ctx context.Context, userID uuid.UUID, sessionID, refreshToken string) (bool, error)
+	GetAllUserSessions(ctx context.Context, userID uuid.UUID) (*[]entities.Session, error)
+	Save2FACode(ctx context.Context, userID uuid.UUID, code string, context entities.TwoFASessionContext, token ...string) error
+	Delete2FACode(ctx context.Context, userID uuid.UUID, context entities.TwoFASessionContext) error
+	Get2FAData(ctx context.Context, userID uuid.UUID, context entities.TwoFASessionContext) (*entities.TwoFASessionData, error)
+	Verify2FACode(ctx context.Context, userID uuid.UUID, code string, context entities.TwoFASessionContext) (*entities.TwoFASessionData, error)
 }
 
 func NewSessionService(redisClient cache.RedisClient, ttl time.Duration) SessionService {
@@ -93,4 +98,83 @@ func (s *sessionService) DeleteSession(ctx context.Context, userID uuid.UUID, se
 func (s *sessionService) UpdateSession(ctx context.Context, userID uuid.UUID, sessionID string, session *entities.Session) error {
 	key := fmt.Sprintf("session:%s:%s", userID, sessionID)
 	return s.redisClient.SetStruct(ctx, key, session, s.ttl)
+}
+
+func (s *sessionService) GetAllUserSessions(ctx context.Context, userID uuid.UUID) (*[]entities.Session, error) {
+	key := fmt.Sprintf("session:%s:*", userID.String())
+	var sessions []entities.Session
+	err := s.redisClient.GetAllByKey(ctx, key, &sessions)
+	if err != nil {
+		return nil, err
+	}
+	return &sessions, nil
+}
+
+func (s *sessionService) Save2FACode(ctx context.Context, userID uuid.UUID, code string, context entities.TwoFASessionContext, token ...string) error {
+	key := fmt.Sprintf("2fa_code:%s:%s", userID, context)
+
+	data := &entities.TwoFASessionData{
+		Code:      code,
+		Context:   context,
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
+	}
+
+	_, err := s.Get2FAData(ctx, userID, context)
+	if err != nil {
+		if len(token) > 0 {
+			data.Token = token[0]
+		}
+
+		return s.redisClient.SetStruct(ctx, key, data, 5*time.Minute)
+	}
+
+	if err := s.Delete2FACode(ctx, userID, context); err != nil {
+		return err
+	}
+
+	if len(token) > 0 {
+		data.Token = token[0]
+	}
+
+	return s.redisClient.SetStruct(ctx, key, data, 5*time.Minute)
+}
+
+func (s *sessionService) Delete2FACode(ctx context.Context, userID uuid.UUID, context entities.TwoFASessionContext) error {
+	key := fmt.Sprintf("2fa_code:%s:%s", userID, context)
+	return s.redisClient.Delete(ctx, key)
+}
+
+func (s *sessionService) Get2FAData(ctx context.Context, userID uuid.UUID, context entities.TwoFASessionContext) (*entities.TwoFASessionData, error) {
+	key := fmt.Sprintf("2fa_code:%s:%s", userID, context)
+	var data entities.TwoFASessionData
+	if err := s.redisClient.GetStruct(ctx, key, &data); err != nil {
+		return nil, entities.Err2FACodeInvalidOrExpired
+	}
+
+	// Проверяем не истек ли код
+	if time.Now().Unix() > data.ExpiresAt {
+		s.redisClient.Delete(ctx, key)
+		return nil, entities.Err2FACodeInvalidOrExpired
+	}
+
+	return &data, nil
+}
+
+func (s *sessionService) Verify2FACode(ctx context.Context, userID uuid.UUID, code string, context entities.TwoFASessionContext) (*entities.TwoFASessionData, error) {
+	data, err := s.Get2FAData(ctx, userID, context)
+	if err != nil {
+		return nil, err
+	}
+
+	if data.Code != code {
+		return nil, entities.Err2FACodeInvalid
+	}
+
+	// Удаляем код после успешной проверки
+	if err := s.Delete2FACode(ctx, userID, context); err != nil {
+		log.Printf("Failed to delete 2FA code: %v", err)
+	}
+
+	return data, nil
 }

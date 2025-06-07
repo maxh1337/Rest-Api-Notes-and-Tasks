@@ -7,9 +7,8 @@ import (
 )
 
 func RegisterUserRoutes(g *echo.Group, handlers handlers.UserHandler) {
-	userGroup := g.Group("/users")
-
-	// Apply auth_middleware for entire group
-
-	userGroup.GET("/get-profile", handlers.GetProfile)
+	g.GET("/get-profile", handlers.GetProfile)
+	g.POST("/update-phone", handlers.UpdateTelephoneNumber)
+	g.POST("/request-enable-2fa", handlers.TwoFactorEnableRequest)
+	g.POST("/verify-enable-2fa/:code", handlers.VerifyTwoFactorEnableRequest)
 }

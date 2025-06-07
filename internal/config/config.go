@@ -25,16 +25,19 @@ type JWTConfig struct {
 	JWTSecret              string
 	JWT_ACCESS_EXPIRATION  int
 	JWT_REFRESH_EXPIRATION int
+	JWT_2FA_EXPIRATION     int
 	JWT_DOMAIN             string
 	JWT_PATH               string
 }
 
 type Config struct {
-	NODE_ENV string
-	Port     string
-	JWT      JWTConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
+	NODE_ENV          string
+	Port              string
+	CLIENT_URL        string
+	GATEWAY_API_TOKEN string
+	JWT               JWTConfig
+	Database          DatabaseConfig
+	Redis             RedisConfig
 }
 
 func Load() (*Config, error) {
@@ -58,7 +61,10 @@ func Load() (*Config, error) {
 			DBName:   os.Getenv("DB_NAME"),
 			SSLMode:  os.Getenv("DB_SSLMODE"),
 		},
-		Port: os.Getenv("PORT"),
+		NODE_ENV:          os.Getenv("NODE_ENV"),
+		Port:              os.Getenv("PORT"),
+		CLIENT_URL:        os.Getenv("CLIENT_URL"),
+		GATEWAY_API_TOKEN: os.Getenv("GATEWAY_API_TOKEN"),
 		JWT: JWTConfig{
 			JWTSecret: os.Getenv("JWT_SECRET"),
 			JWT_ACCESS_EXPIRATION: func() int {
@@ -75,9 +81,15 @@ func Load() (*Config, error) {
 				}
 				return val
 			}(),
+			JWT_2FA_EXPIRATION: func() int {
+				val, err := strconv.Atoi(os.Getenv("JWT_2FA_EXPIRATION"))
+				if err != nil {
+					return 0
+				}
+				return val
+			}(),
 			JWT_DOMAIN: os.Getenv("JWT_DOMAIN"),
 			JWT_PATH:   os.Getenv("JWT_PATH"),
 		},
-		NODE_ENV: os.Getenv("NODE_ENV"),
 	}, nil
 }
