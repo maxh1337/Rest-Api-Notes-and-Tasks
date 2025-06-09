@@ -82,8 +82,8 @@ func (m *MiddlewareManager) StrictCORS() echo.MiddlewareFunc {
 	}
 }
 
-func (m *MiddlewareManager) RateLimit(requestsPerMinute int) echo.MiddlewareFunc {
-	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(requestsPerMinute)), requestsPerMinute)
+func (m *MiddlewareManager) RateLimit(requestsPerHour int) echo.MiddlewareFunc {
+	limiter := rate.NewLimiter(rate.Every(time.Hour/time.Duration(requestsPerHour)), requestsPerHour)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

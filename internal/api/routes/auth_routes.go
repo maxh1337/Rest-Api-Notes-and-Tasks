@@ -11,7 +11,7 @@ func RegisterAuthRoutes(g *echo.Group, authHandler handlers.AuthHandler, m *midd
 	g.POST("/login", authHandler.Login)
 	g.POST("/register", authHandler.Register)
 	g.POST("/logout", authHandler.Logout)
-	g.POST("/token/refresh", authHandler.GetNewTokens, m.RateLimit(5))
+	g.POST("/token/refresh", authHandler.GetNewTokens, m.RateLimit(6))
 	g.POST("/2fa/verify/:code", authHandler.Verify2FA, m.TwoFactorTokenCheck(), m.RateLimit(5))
 	g.POST("/2fa/resend", authHandler.Resend2FA, m.TwoFactorTokenCheck(), m.RateLimit(5))
 }

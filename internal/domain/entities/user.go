@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	ErrEmailAlreadyTaken    = errors.New("email already taken")
-	ErrUsernameAlreadyTaken = errors.New("username already taken")
-	ErrUserNotFound         = errors.New("user not found")
-	ErrInvalidEmailFormat   = errors.New("invalid email format")
-	ErrCantChangePhone2FA   = errors.New("you cant change phone number while 2FA active")
+	ErrEmailAlreadyTaken        = errors.New("email already taken")
+	ErrUsernameAlreadyTaken     = errors.New("username already taken")
+	ErrUserNotFound             = errors.New("user not found")
+	ErrInvalidEmailFormat       = errors.New("invalid email format")
+	ErrCantChangePhone2FA       = errors.New("you cant change phone number while 2FA active")
+	ErrNoPhoneNumberToEnable2FA = errors.New("you must set phone number before requesting codes to set 2FA")
 )
 
 type User struct {

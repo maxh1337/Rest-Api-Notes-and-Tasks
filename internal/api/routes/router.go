@@ -15,14 +15,14 @@ func SetupRoutes(e *echo.Echo, cfg *config.Config, jwtService auth.JWTService,
 
 	mM := middleware.NewMiddlewareManager(cfg, jwtService)
 	// // Global Middleware
-	e.Use(mM.StrictCORS(), mM.RateLimit(100))
+	e.Use(mM.StrictCORS(), mM.RateLimit(6000))
 
 	// User group
 	userGroup := apiGroup.Group("/users")
 	// Middleware for user group
 	userGroup.Use(mM.RequireAuth())
 	// User group routes
-	RegisterUserRoutes(userGroup, userHandler)
+	RegisterUserRoutes(userGroup, userHandler, mM)
 
 	// Authorization group
 	authGroup := apiGroup.Group("/auth")

@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"log"
 	"rest-api-notes/internal/domain/entities"
 	"rest-api-notes/internal/domain/repositories"
 
@@ -12,8 +11,9 @@ import (
 type UserService interface {
 	GetUserProfile(userId uuid.UUID) (*entities.User, error)
 	UpdateUserPhone(ctx context.Context, req *entities.UserUpdatePhoneReq, userID uuid.UUID) error
-	TwoFactorEnableRequest(ctx context.Context, userID uuid.UUID) error
-	VerifyTwoFactorEnableRequest(ctx context.Context, userID uuid.UUID, code string) error
+	TwoFactorToggleRequest(ctx context.Context, userID uuid.UUID) error
+	VerifyTwoFactorToggleRequest(ctx context.Context, userID uuid.UUID, code string) error
+	ResendTwoFactorCode(ctx context.Context, userID uuid.UUID) error
 }
 
 type userService struct {
@@ -57,14 +57,14 @@ func (s *userService) UpdateUserPhone(ctx context.Context, req *entities.UserUpd
 	return nil
 }
 
-func (s *userService) TwoFactorEnableRequest(ctx context.Context, userID uuid.UUID) error {
+func (s *userService) TwoFactorToggleRequest(ctx context.Context, userID uuid.UUID) error {
 	user, err := s.userRepo.GetUserById(userID)
 	if err != nil {
 		return err
 	}
 
-	if user.TwoFactorEnabled {
-		return entities.Err2FAAlreadyEnabled
+	if user.PhoneNumber == "" {
+		return entities.ErrNoPhoneNumberToEnable2FA
 	}
 
 	code, err := s.twoFactorService.Generate2FACode()
@@ -72,14 +72,12 @@ func (s *userService) TwoFactorEnableRequest(ctx context.Context, userID uuid.UU
 		return err
 	}
 
-	log.Printf("UserID - %v. Code - %s", userID, code)
-
-	if err := s.sessionService.Save2FACode(ctx, userID, code, "enable"); err != nil {
+	if err := s.sessionService.Save2FACode(ctx, userID, code, "toggle"); err != nil {
 		return err
 	}
 
 	if err := s.twoFactorService.MakeRequestToGateway(ctx, user.PhoneNumber, code); err != nil {
-		if err := s.sessionService.Delete2FACode(ctx, userID, "enable"); err != nil {
+		if err := s.sessionService.Delete2FACode(ctx, userID, "toggle"); err != nil {
 			return err
 		}
 		return err
@@ -88,21 +86,46 @@ func (s *userService) TwoFactorEnableRequest(ctx context.Context, userID uuid.UU
 	return nil
 }
 
-func (s *userService) VerifyTwoFactorEnableRequest(ctx context.Context, userID uuid.UUID, code string) error {
+func (s *userService) VerifyTwoFactorToggleRequest(ctx context.Context, userID uuid.UUID, code string) error {
+	_, err := s.userRepo.GetUserById(userID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.sessionService.Verify2FACode(ctx, userID, code, "toggle"); err != nil {
+		return err
+	}
+
+	if err := s.userRepo.ToggleUser2FA(userID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *userService) ResendTwoFactorCode(ctx context.Context, userID uuid.UUID) error {
 	user, err := s.userRepo.GetUserById(userID)
 	if err != nil {
 		return err
 	}
 
-	if user.TwoFactorEnabled {
-		return entities.Err2FAAlreadyEnabled
+	if user.PhoneNumber == "" {
+		return entities.ErrNoPhoneNumberToEnable2FA
 	}
 
-	if _, err := s.sessionService.Verify2FACode(ctx, userID, code, "enable"); err != nil {
+	code, err := s.twoFactorService.Generate2FACode()
+	if err != nil {
 		return err
 	}
 
-	if err := s.userRepo.EnableUser2FA(userID); err != nil {
+	if err := s.sessionService.Save2FACode(ctx, userID, code, "toggle"); err != nil {
+		return err
+	}
+
+	if err := s.twoFactorService.MakeRequestToGateway(ctx, user.PhoneNumber, code); err != nil {
+		if err := s.sessionService.Delete2FACode(ctx, userID, "toggle"); err != nil {
+			return err
+		}
 		return err
 	}
 

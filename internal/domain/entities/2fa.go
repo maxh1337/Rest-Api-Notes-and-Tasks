@@ -27,7 +27,7 @@ type TwoFASessionContext string
 
 const (
 	TwoFAContextLogin  TwoFASessionContext = "login"
-	TwoFAContextEnable TwoFASessionContext = "enable"
+	TwoFAContextToggle TwoFASessionContext = "toggle"
 )
 
 type SendCodeRequest struct {

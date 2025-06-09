@@ -15,6 +15,7 @@ const (
 	ErrorCode2FACodeRevoked    = "2FA_CODE_REVOKED"
 	ErrorCode2FATokenMismatch  = "2FA_TOKEN_MISMATCH"
 	ErrorCode2FAAlreadyEnabled = "2FA_ALREADY_ENABLED"
+	ErrorCode2FAPhoneNotSet    = "PHONE_NOT_SET"
 
 	// Session errors
 	ErrorCodeSessionWrongDevice = "SESSION_WRONG_DEVICE"
@@ -119,11 +120,12 @@ var ErrorMapper = map[error]*APIError{
 	ErrInvalidSessionID:              NewAPIError(ErrorCodeInvalidSessionID, "Invalid session ID"),
 
 	// User errors
-	ErrEmailAlreadyTaken:    NewAPIError(ErrorCodeEmailTaken, "Email address is already taken"),
-	ErrUsernameAlreadyTaken: NewAPIError(ErrorCodeUsernameTaken, "Username is already taken"),
-	ErrUserNotFound:         NewAPIError(ErrorCodeUserNotFound, "User not found"),
-	ErrInvalidEmailFormat:   NewAPIError(ErrorCodeInvalidEmailFormat, "Invalid email format"),
-	ErrCantChangePhone2FA:   NewAPIError(ErrorCodeCantChangePhone2FA, "Cannot change phone number while 2FA is active"),
+	ErrEmailAlreadyTaken:        NewAPIError(ErrorCodeEmailTaken, "Email address is already taken"),
+	ErrUsernameAlreadyTaken:     NewAPIError(ErrorCodeUsernameTaken, "Username is already taken"),
+	ErrUserNotFound:             NewAPIError(ErrorCodeUserNotFound, "User not found"),
+	ErrInvalidEmailFormat:       NewAPIError(ErrorCodeInvalidEmailFormat, "Invalid email format"),
+	ErrCantChangePhone2FA:       NewAPIError(ErrorCodeCantChangePhone2FA, "Cannot change phone number while 2FA is active"),
+	ErrNoPhoneNumberToEnable2FA: NewAPIError(ErrorCode2FAPhoneNotSet, "you must set phone number before requesting codes to set 2FA"),
 }
 
 func ConvertError(err error) error {

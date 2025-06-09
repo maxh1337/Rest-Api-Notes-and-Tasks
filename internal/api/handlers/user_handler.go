@@ -17,8 +17,9 @@ type userHandler struct {
 type UserHandler interface {
 	GetProfile(c echo.Context) error
 	UpdateTelephoneNumber(c echo.Context) error
-	TwoFactorEnableRequest(c echo.Context) error
-	VerifyTwoFactorEnableRequest(c echo.Context) error
+	TwoFactorToggleRequest(c echo.Context) error
+	VerifyTwoFactorToggleRequest(c echo.Context) error
+	ResendTwoFactorCode(c echo.Context) error
 }
 
 func NewUserHandler(userService services.UserService, twoFactorService services.TwoFactorService) UserHandler {
@@ -64,37 +65,71 @@ func (h *userHandler) UpdateTelephoneNumber(c echo.Context) error {
 	return c.JSON(http.StatusOK, "Successfully updated")
 }
 
-// Переделать в Toggle !prev
-func (h *userHandler) TwoFactorEnableRequest(c echo.Context) error {
+func (h *userHandler) TwoFactorToggleRequest(c echo.Context) error {
 	ctx := c.Request().Context()
-	userID := c.Get("user_id").(uuid.UUID)
-	if userID == uuid.Nil {
-		return c.String(http.StatusBadRequest, "Invalid user ID")
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "User not authenticated")
 	}
 
-	if err := h.userService.TwoFactorEnableRequest(ctx, userID); err != nil {
-		return c.String(http.StatusBadRequest, err.Error())
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "Invalid user ID")
 	}
 
-	return c.JSON(http.StatusOK, "Code was sent")
+	if err := h.userService.TwoFactorToggleRequest(ctx, userID); err != nil {
+		return entities.ConvertError(err)
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "2FA toggle code sent successfully",
+	})
 }
 
-// Переделать в Toggle !prev
-func (h *userHandler) VerifyTwoFactorEnableRequest(c echo.Context) error {
+func (h *userHandler) VerifyTwoFactorToggleRequest(c echo.Context) error {
 	ctx := c.Request().Context()
-	userID := c.Get("user_id").(uuid.UUID)
-	if userID == uuid.Nil {
-		return c.JSON(http.StatusBadRequest, "Invalid user ID")
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "User not authenticated")
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "Invalid user ID")
 	}
 
 	code := c.Param("code")
 	if code == "" {
-		return c.JSON(http.StatusBadRequest, "Please provide verification code")
+		return entities.NewAPIError(entities.ErrorCode2FACodeInvalid, "2FA code is required")
 	}
 
-	if err := h.userService.VerifyTwoFactorEnableRequest(ctx, userID, code); err != nil {
-		return c.JSON(http.StatusBadRequest, err.Error())
+	if err := h.userService.VerifyTwoFactorToggleRequest(ctx, userID, code); err != nil {
+		return entities.ConvertError(err)
 	}
 
-	return c.JSON(http.StatusOK, "2FA was enabled successfully ")
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "2FA toggle code was toggled successfully",
+	})
+}
+
+func (h *userHandler) ResendTwoFactorCode(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "User not authenticated")
+	}
+
+	userID, ok := userIDInterface.(uuid.UUID)
+	if !ok {
+		return entities.NewAPIError(entities.ErrorCodeUnauthorized, "Invalid user ID")
+	}
+
+	if err := h.userService.ResendTwoFactorCode(ctx, userID); err != nil {
+		return entities.ConvertError(err)
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "2FA toggle code resent successfully",
+	})
 }

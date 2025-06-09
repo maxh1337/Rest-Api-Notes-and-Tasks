@@ -24,7 +24,7 @@ type UserRepository interface {
 	CheckUserUniqueness(email, username string) error
 	FindUserByEmailOrUsername(identifier string) (*entities.User, error)
 	UpdatePhoneNumber(phoneNumber string, userID uuid.UUID) error
-	EnableUser2FA(userID uuid.UUID) error
+	ToggleUser2FA(userID uuid.UUID) error
 	DisableUser2FA(userID uuid.UUID) error
 }
 
@@ -124,8 +124,12 @@ func (r *userRepository) FindUserByEmailOrUsername(identifier string) (*entities
 	return &user, nil
 }
 
-func (r *userRepository) EnableUser2FA(userID uuid.UUID) error {
-	result := r.db.Model(&entities.User{}).Where("id = ?", userID).Update("two_factor_enabled", true)
+func (r *userRepository) ToggleUser2FA(userID uuid.UUID) error {
+	user, err := r.GetUserById(userID)
+	if err != nil {
+		return err
+	}
+	result := r.db.Model(&entities.User{}).Where("id = ?", userID).Update("two_factor_enabled", !user.TwoFactorEnabled)
 	if result.Error != nil {
 		return result.Error
 	}

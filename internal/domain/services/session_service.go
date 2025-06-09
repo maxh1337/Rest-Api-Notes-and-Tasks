@@ -110,6 +110,8 @@ func (s *sessionService) GetAllUserSessions(ctx context.Context, userID uuid.UUI
 	return &sessions, nil
 }
 
+// 2FA LOGIC
+
 func (s *sessionService) Save2FACode(ctx context.Context, userID uuid.UUID, code string, context entities.TwoFASessionContext, token ...string) error {
 	key := fmt.Sprintf("2fa_code:%s:%s", userID, context)
 
